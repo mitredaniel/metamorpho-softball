@@ -1,10 +1,11 @@
 (() => {
   'use strict';
   const KEY = 'metamorpho-mvp-v1';
-  const fresh = () => ({ lineup: [], batterIndex: 0, homeScore: 0, awayScore: 0, outs: 0, inning: 1 });
+  const fresh = () => ({ lineup: [], batterIndex: 0, homeScore: 0, awayScore: 0, outs: 0, inning: 1, halfInning: "TOP" });
   let state;
   try { state = { ...fresh(), ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { state = fresh(); }
   if (!Array.isArray(state.lineup)) state.lineup = [];
+  if (!['TOP', 'BOTTOM'].includes(state.halfInning)) state.halfInning = 'TOP';
   const $ = id => document.getElementById(id);
   const save = () => { localStorage.setItem(KEY, JSON.stringify(state)); render(); };
   const snapshots = [];
@@ -24,13 +25,14 @@
     });
     $('emptyLineup').hidden = state.lineup.length > 0;
     $('homeScore').textContent = state.homeScore; $('awayScore').textContent = state.awayScore;
-    $('inning').textContent = state.inning;
+    $('inning').textContent = `${state.inning} · ${state.halfInning === 'TOP' ? 'Alta' : 'Baja'}`;
+    $('battingTeam').textContent = state.halfInning === 'TOP' ? 'Tampa Warriors (visitante)' : 'Metamorpho (local)';
     $('outsDisplay').textContent = '● '.repeat(state.outs) + '○ '.repeat(3 - state.outs);
     const n = state.lineup.length;
     state.batterIndex = n ? state.batterIndex % n : 0;
-    $('currentBatter').textContent = n ? state.lineup[state.batterIndex] : 'Sin jugadores';
-    $('nextBatter').textContent = n ? state.lineup[(state.batterIndex + 1) % n] : '—';
-    $('nextBatterBtn').disabled = n === 0;
+    $('currentBatter').textContent = state.halfInning === 'TOP' ? 'Turno del rival' : (n ? state.lineup[state.batterIndex] : 'Sin jugadores');
+    $('nextBatter').textContent = state.halfInning === 'TOP' ? '—' : (n ? state.lineup[(state.batterIndex + 1) % n] : '—');
+    $('nextBatterBtn').disabled = n === 0 || state.halfInning === 'TOP';
   }
   function move(i, dir) { const j = i + dir; if (j < 0 || j >= state.lineup.length) return; mutate(() => { [state.lineup[i], state.lineup[j]] = [state.lineup[j], state.lineup[i]]; }); }
   function remove(i) { mutate(() => { state.lineup.splice(i, 1); state.batterIndex = 0; }); }
@@ -88,7 +90,9 @@
       if (!confirm('¿Reemplazar el lineup y marcador actuales con este respaldo?')) return;
       const v = payload.state;
       if (!v.lineup.every(x => typeof x === 'string') || !['batterIndex','homeScore','awayScore','outs','inning'].every(k => Number.isInteger(v[k]) && v[k] >= 0)) throw new Error('Datos inválidos');
-      state = { ...fresh(), ...v }; save(); alert('Respaldo restaurado.');
+      state = { ...fresh(), ...v };
+      if (!['TOP','BOTTOM'].includes(state.halfInning)) state.halfInning = 'TOP';
+      save(); alert('Respaldo restaurado.');
     } catch (error) { alert('No se pudo importar: ' + error.message); }
     finally { event.target.value = ''; }
   };
@@ -97,9 +101,14 @@
   $('resetLineup').onclick = () => { if (confirm('¿Borrar todo el lineup?')) mutate(() => { state.lineup = []; state.batterIndex = 0; }); };
   $('startGame').onclick = () => { if (!state.lineup.length) return alert('Agrega al menos un jugador.'); show('game'); };
   $('nextBatterBtn').onclick = () => { if (state.lineup.length) mutate(() => { state.batterIndex = (state.batterIndex + 1) % state.lineup.length; }); };
-  $('addRun').onclick = () => mutate(() => { state.homeScore++; });
-  $('addOut').onclick = () => mutate(() => { state.outs++; if (state.outs >= 3) { state.outs = 0; state.inning++; } });
-  $('nextInning').onclick = () => mutate(() => { state.inning++; state.outs = 0; });
+  $('addRun').onclick = () => mutate(() => { if (state.halfInning === 'TOP') state.awayScore++; else state.homeScore++; });
+  function advanceHalfInning() {
+    state.outs = 0;
+    if (state.halfInning === 'TOP') state.halfInning = 'BOTTOM';
+    else { state.halfInning = 'TOP'; state.inning++; }
+  }
+  $('addOut').onclick = () => mutate(() => { state.outs++; if (state.outs >= 3) advanceHalfInning(); });
+  $('nextInning').onclick = () => { if (confirm('¿Terminar esta media entrada y cambiar de equipo?')) mutate(advanceHalfInning); }; 
   $('undo').onclick = () => { if (!snapshots.length) return alert('No hay cambios para deshacer en esta sesión.'); state = JSON.parse(snapshots.pop()); save(); };
   $('resetGame').onclick = () => { if (confirm('¿Reiniciar marcador, outs y bateador? El lineup se conserva.')) mutate(() => { const lineup = state.lineup; state = { ...fresh(), lineup }; }); };
   render();
