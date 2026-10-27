@@ -1,12 +1,15 @@
 (() => {
   'use strict';
   const KEY = 'metamorpho-mvp-v1';
-  const fresh = () => ({ lineup: [], batterIndex: 0, homeScore: 0, awayScore: 0, outs: 0, inning: 1, halfInning: "TOP" });
+  const fresh = () => ({ lineup: [], batterIndex: 0, homeScore: 0, awayScore: 0, outs: 0, inning: 1, halfInning: "TOP", teamSide: "HOME" });
   let state;
   try { state = { ...fresh(), ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { state = fresh(); }
   if (!Array.isArray(state.lineup)) state.lineup = [];
   if (!['TOP', 'BOTTOM'].includes(state.halfInning)) state.halfInning = 'TOP';
+  if (!['HOME', 'AWAY'].includes(state.teamSide)) state.teamSide = 'HOME';
   const $ = id => document.getElementById(id);
+  const metamorphoBatting = () => (state.halfInning === 'TOP') === (state.teamSide === 'AWAY');
+  const gameInProgress = () => state.inning !== 1 || state.halfInning !== 'TOP' || state.outs !== 0 || state.homeScore !== 0 || state.awayScore !== 0 || state.batterIndex !== 0;
   const save = () => { localStorage.setItem(KEY, JSON.stringify(state)); render(); };
   const snapshots = [];
   const mutate = fn => { snapshots.push(JSON.stringify(state)); if (snapshots.length > 30) snapshots.shift(); fn(); save(); };
@@ -26,13 +29,15 @@
     $('emptyLineup').hidden = state.lineup.length > 0;
     $('homeScore').textContent = state.homeScore; $('awayScore').textContent = state.awayScore;
     $('inning').textContent = `${state.inning} · ${state.halfInning === 'TOP' ? 'Alta' : 'Baja'}`;
-    $('battingTeam').textContent = state.halfInning === 'TOP' ? 'Tampa Warriors (visitante)' : 'Metamorpho (local)';
+    const ourTurn = metamorphoBatting();
+    $('battingTeam').textContent = ourTurn ? `Metamorpho (${state.teamSide === 'HOME' ? 'local' : 'visitante'})` : `Rival (${state.teamSide === 'HOME' ? 'visitante' : 'local'})`;
+    $('teamSide').value = state.teamSide;
     $('outsDisplay').textContent = '● '.repeat(state.outs) + '○ '.repeat(3 - state.outs);
     const n = state.lineup.length;
     state.batterIndex = n ? state.batterIndex % n : 0;
-    $('currentBatter').textContent = state.halfInning === 'TOP' ? 'Turno del rival' : (n ? state.lineup[state.batterIndex] : 'Sin jugadores');
-    $('nextBatter').textContent = state.halfInning === 'TOP' ? '—' : (n ? state.lineup[(state.batterIndex + 1) % n] : '—');
-    $('nextBatterBtn').disabled = n === 0 || state.halfInning === 'TOP';
+    $('currentBatter').textContent = !ourTurn ? 'Turno del rival' : (n ? state.lineup[state.batterIndex] : 'Sin jugadores');
+    $('nextBatter').textContent = !ourTurn ? '—' : (n ? state.lineup[(state.batterIndex + 1) % n] : '—');
+    $('nextBatterBtn').disabled = n === 0 || !ourTurn;
   }
   function move(i, dir) { const j = i + dir; if (j < 0 || j >= state.lineup.length) return; mutate(() => { [state.lineup[i], state.lineup[j]] = [state.lineup[j], state.lineup[i]]; }); }
   function remove(i) { mutate(() => { state.lineup.splice(i, 1); state.batterIndex = 0; }); }
@@ -92,16 +97,24 @@
       if (!v.lineup.every(x => typeof x === 'string') || !['batterIndex','homeScore','awayScore','outs','inning'].every(k => Number.isInteger(v[k]) && v[k] >= 0)) throw new Error('Datos inválidos');
       state = { ...fresh(), ...v };
       if (!['TOP','BOTTOM'].includes(state.halfInning)) state.halfInning = 'TOP';
+      if (!['HOME','AWAY'].includes(state.teamSide)) state.teamSide = 'HOME';
       save(); alert('Respaldo restaurado.');
     } catch (error) { alert('No se pudo importar: ' + error.message); }
     finally { event.target.value = ''; }
+  };
+  $('teamSide').onchange = event => {
+    const selected = event.target.value;
+    if (gameInProgress() && !confirm('Ya hay actividad registrada. Cambiar Local/Visitante puede reinterpretar el partido actual. ¿Continuar?')) {
+      event.target.value = state.teamSide; return;
+    }
+    mutate(() => { state.teamSide = selected; });
   };
   $('addPlayer').onclick = () => { const name = $('playerName').value.trim(); if (!name) return; mutate(() => { state.lineup.push(name); }); $('playerName').value = ''; $('playerName').focus(); };
   $('playerName').addEventListener('keydown', e => { if (e.key === 'Enter') $('addPlayer').click(); });
   $('resetLineup').onclick = () => { if (confirm('¿Borrar todo el lineup?')) mutate(() => { state.lineup = []; state.batterIndex = 0; }); };
   $('startGame').onclick = () => { if (!state.lineup.length) return alert('Agrega al menos un jugador.'); show('game'); };
   $('nextBatterBtn').onclick = () => { if (state.lineup.length) mutate(() => { state.batterIndex = (state.batterIndex + 1) % state.lineup.length; }); };
-  $('addRun').onclick = () => mutate(() => { if (state.halfInning === 'TOP') state.awayScore++; else state.homeScore++; });
+  $('addRun').onclick = () => mutate(() => { if (metamorphoBatting()) state.homeScore++; else state.awayScore++; });
   function advanceHalfInning() {
     state.outs = 0;
     if (state.halfInning === 'TOP') state.halfInning = 'BOTTOM';
@@ -110,6 +123,6 @@
   $('addOut').onclick = () => mutate(() => { state.outs++; if (state.outs >= 3) advanceHalfInning(); });
   $('nextInning').onclick = () => { if (confirm('¿Terminar esta media entrada y cambiar de equipo?')) mutate(advanceHalfInning); }; 
   $('undo').onclick = () => { if (!snapshots.length) return alert('No hay cambios para deshacer en esta sesión.'); state = JSON.parse(snapshots.pop()); save(); };
-  $('resetGame').onclick = () => { if (confirm('¿Reiniciar marcador, outs y bateador? El lineup se conserva.')) mutate(() => { const lineup = state.lineup; state = { ...fresh(), lineup }; }); };
+  $('resetGame').onclick = () => { if (confirm('¿Reiniciar marcador, outs y bateador? El lineup se conserva.')) mutate(() => { const { lineup, teamSide } = state; state = { ...fresh(), lineup, teamSide }; }); };
   render();
 })();
